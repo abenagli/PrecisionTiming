@@ -44,7 +44,7 @@ options.register('runMTDReco',
                  VarParsing.varType.bool,
                  "Run MTD Reco")
 options.register('useMTDTrack',
-                 False,
+                 True,
                  VarParsing.multiplicity.singleton,
                  VarParsing.varType.bool,
                  "Use MTD Track")
@@ -66,6 +66,8 @@ if 'tile' in options.crysLayout:
     myera=eras.Phase2_timing_layer_tile
 if 'barphi' in options.crysLayout:
     myera=eras.Phase2_timing_layer_bar
+if 'barphiflat' in options.crysLayout:
+    myera=eras.Phase2C4_timing_layer_bar
 if 'barzflat' in options.crysLayout:
     myera=eras.Phase2C4_timing_layer_bar
 process = cms.Process('FTLDumpHits',myera)
@@ -97,6 +99,9 @@ if 'tile' in options.crysLayout:
 if 'barphi' in options.crysLayout:
     process.load('Configuration.Geometry.GeometryExtended2023D25Reco_cff')
     process.load('Configuration.Geometry.GeometryExtended2023D25_cff')
+if 'barphiflat' in options.crysLayout:
+    process.load('Configuration.Geometry.GeometryExtended2023D38Reco_cff')
+    process.load('Configuration.Geometry.GeometryExtended2023D38_cff')
 if 'barzflat' in options.crysLayout:
     process.load('Configuration.Geometry.GeometryExtended2023D35Reco_cff')
     process.load('Configuration.Geometry.GeometryExtended2023D35_cff')
@@ -167,6 +172,8 @@ if 'barphi' in options.crysLayout:
     FTLDumper.crysLayout = cms.untracked.int32(2)
 if 'barzflat' in options.crysLayout:
     FTLDumper.crysLayout = cms.untracked.int32(3)
+if 'barphiflat' in options.crysLayout:
+    FTLDumper.crysLayout = cms.untracked.int32(4)
 
 # Output TFile
 process.TFileService = cms.Service(

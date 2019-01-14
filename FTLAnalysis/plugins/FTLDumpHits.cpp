@@ -19,6 +19,7 @@
 #include "DataFormats/Math/interface/deltaPhi.h"
 #include "DataFormats/ForwardDetId/interface/BTLDetId.h"
 #include "DataFormats/ForwardDetId/interface/ETLDetId.h"
+#include "DataFormats/FTLRecHit/interface/FTLUncalibratedRecHit.h"
 #include "DataFormats/FTLRecHit/interface/FTLRecHit.h"
 #include "DataFormats/FTLRecHit/interface/FTLRecHitCollections.h"
 #include "DataFormats/FTLRecHit/interface/FTLClusterCollections.h"
@@ -99,27 +100,32 @@ private:
   //---inputs
   edm::Handle<reco::GenParticleCollection> genParticlesHandle_;
   edm::EDGetTokenT<reco::GenParticleCollection> genParticlesToken_;
-
+  edm::Handle<vector<SimVertex> > genVtxHandle_;
+  edm::EDGetTokenT<vector<SimVertex> > genVtxToken_;
+  
   edm::Handle<std::vector<PSimHit> > simHitsBTLHandle_;
   edm::EDGetTokenT<std::vector<PSimHit> > simHitsBTLToken_;
+  edm::Handle<FTLUncalibratedRecHitCollection> uncalibRecHitsBTLHandle_;
+  edm::EDGetTokenT<FTLUncalibratedRecHitCollection> uncalibRecHitsBTLToken_;
   edm::Handle<FTLRecHitCollection> recHitsBTLHandle_;
-  edm::EDGetTokenT<FTLRecHitCollection> recHitsBTLToken_;    
+  edm::EDGetTokenT<FTLRecHitCollection> recHitsBTLToken_;
   edm::Handle<FTLClusterCollection> clustersBTLHandle_;
   edm::EDGetTokenT<FTLClusterCollection> clustersBTLToken_;    
-
+  
   edm::Handle<std::vector<PSimHit> > simHitsETLHandle_;
   edm::EDGetTokenT<std::vector<PSimHit> > simHitsETLToken_;
   edm::Handle<FTLRecHitCollection> recHitsETLHandle_;
   edm::EDGetTokenT<FTLRecHitCollection> recHitsETLToken_;    
   edm::Handle<FTLClusterCollection> clustersETLHandle_;
   edm::EDGetTokenT<FTLClusterCollection> clustersETLToken_;    
-
+  
   edm::EDGetTokenT<edm::View<reco::Track> > tracksToken_;
   edm::Handle<edm::View<reco::Track> > tracksHandle_;
-  edm::EDGetTokenT<vector<SimVertex> >                 genVtxToken_;
-  edm::Handle<vector<SimVertex> >                      genVtxHandle_;    
-  edm::ESHandle<TransientTrackBuilder> builder;
-
+  edm::EDGetTokenT<edm::ValueMap<float> > trackLengthsToken_;
+  edm::Handle<edm::ValueMap<float> > trackLengthsHandle_;
+  
+  edm::ESHandle<TransientTrackBuilder> ttrackBuilder;
+  
   //---options
   BTLDetId::CrysLayout crysLayout_;
   double track_hit_DRMax_;
@@ -129,21 +135,22 @@ private:
   //---outputs
   FTLHitsTree outTree_;
   edm::Service<TFileService> fs_;  
-  
 };
 
 
 
 FTLDumpHits::FTLDumpHits(const edm::ParameterSet& pSet):
   genParticlesToken_(consumes<reco::GenParticleCollection>(pSet.getUntrackedParameter<edm::InputTag>("genParticlesTag"))),
+  genVtxToken_(consumes<vector<SimVertex> >(pSet.getUntrackedParameter<edm::InputTag>("genVtxTag"))),
   simHitsBTLToken_(consumes<std::vector<PSimHit> >(pSet.getUntrackedParameter<edm::InputTag>("simHitsBTLTag"))),
+  uncalibRecHitsBTLToken_(consumes<FTLUncalibratedRecHitCollection>(pSet.getUntrackedParameter<edm::InputTag>("uncalibRecHitsBTLTag"))),
   recHitsBTLToken_(consumes<FTLRecHitCollection>(pSet.getUntrackedParameter<edm::InputTag>("recHitsBTLTag"))),
   clustersBTLToken_(consumes<FTLClusterCollection>(pSet.getUntrackedParameter<edm::InputTag>("clustersBTLTag"))),
   simHitsETLToken_(consumes<std::vector<PSimHit> >(pSet.getUntrackedParameter<edm::InputTag>("simHitsETLTag"))),
   recHitsETLToken_(consumes<FTLRecHitCollection>(pSet.getUntrackedParameter<edm::InputTag>("recHitsETLTag"))),
   clustersETLToken_(consumes<FTLClusterCollection>(pSet.getUntrackedParameter<edm::InputTag>("clustersETLTag"))),
   tracksToken_(consumes<edm::View<reco::Track> >(pSet.getUntrackedParameter<edm::InputTag>("tracksTag"))),
-  genVtxToken_(consumes<vector<SimVertex> >(pSet.getUntrackedParameter<edm::InputTag>("genVtxTag"))),
+  trackLengthsToken_(consumes<edm::ValueMap<float> >(pSet.getUntrackedParameter<edm::InputTag>("trackLengthsTag"))),
   crysLayout_((BTLDetId::CrysLayout)(pSet.getUntrackedParameter<int>("crysLayout"))),
   track_hit_DRMax_(pSet.getParameter<double>("track_hit_DRMax")),
   track_hit_distMax_(pSet.getParameter<double>("track_hit_distMax")),
@@ -158,6 +165,7 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
 {
   outTree_.Reset();
   
+  
   //---get the MTD geometry
   edm::ESHandle<MTDGeometry> geoHandle;
   setup.get<MTDDigiGeometryRecord>().get(geoHandle);
@@ -166,63 +174,73 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
   edm::ESHandle<MTDDetLayerGeometry> layerGeo;
   setup.get<MTDRecoGeometryRecord>().get(layerGeo);
   
+  
   //--- get the B field
   edm::ESHandle<MagneticField> theField;
   setup.get<IdealMagneticFieldRecord>().get(theField);
-  PropagationDirection dir(alongMomentum);
-  SteppingHelixPropagator* propagator = new SteppingHelixPropagator(theField.product(),dir);
-  propagator -> setMaterialMode(false);
-  propagator -> setNoErrorPropagation(false);
-
-  setup.get<TransientTrackRecord>().get("TransientTrackBuilder", builder);
-
+  
+  
   //--- load gen particles
   event.getByToken(genParticlesToken_, genParticlesHandle_);
   auto genParticles = *genParticlesHandle_.product();
   
-  //---load sim hits
+  event.getByToken(genVtxToken_, genVtxHandle_);    
+  const SimVertex* genPV = NULL;
+  if(genVtxHandle_.isValid()) genPV = &(genVtxHandle_.product()->at(0));
+  auto simVertices = *genVtxHandle_.product();
+  
+  //---load BTL hits
   event.getByToken(simHitsBTLToken_, simHitsBTLHandle_);
   auto simHitsBTL = *simHitsBTLHandle_.product();
   
-  //---load the FTL collection if present in the EventContent (avoid crash with standard geometry)
   event.getByToken(recHitsBTLToken_, recHitsBTLHandle_);
   auto recHitsBTL = FTLRecHitCollection();
-  if(recHitsBTLHandle_.isValid())
-    recHitsBTL = *recHitsBTLHandle_.product();
-
+  if(recHitsBTLHandle_.isValid()) recHitsBTL = *recHitsBTLHandle_.product();
+  
+  event.getByToken(uncalibRecHitsBTLToken_, uncalibRecHitsBTLHandle_);
+  auto uncalibRecHitsBTL = FTLUncalibratedRecHitCollection();
+  if(uncalibRecHitsBTLHandle_.isValid()) uncalibRecHitsBTL = *uncalibRecHitsBTLHandle_.product();
+  
   event.getByToken(clustersBTLToken_, clustersBTLHandle_);
-  // auto clusters = FTLClusterCollection();
-  // if(clustersBTLHandle_.isValid())
   auto clustersBTL = *clustersBTLHandle_.product();
-
-
-  //---load sim hits
+  
+  
+  //---load ETL hits
   event.getByToken(simHitsETLToken_, simHitsETLHandle_);
   auto simHitsETL = *simHitsETLHandle_.product();
   
   //---load the FTL collection if present in the EventContent (avoid crash with standard geometry)
   event.getByToken(recHitsETLToken_, recHitsETLHandle_);
   auto recHitsETL = FTLRecHitCollection();
-  if(recHitsETLHandle_.isValid())
-    recHitsETL = *recHitsETLHandle_.product();
-
+  if(recHitsETLHandle_.isValid()) recHitsETL = *recHitsETLHandle_.product();
+  
   event.getByToken(clustersETLToken_, clustersETLHandle_);
-  // auto clusters = FTLClusterCollection();
-  // if(clustersETLHandle_.isValid())
   auto clustersETL = *clustersETLHandle_.product();
+  
   
   //---load tracks
   event.getByToken(tracksToken_,tracksHandle_);
   auto tracks = *tracksHandle_.product();
   
-
-  event.getByToken(genVtxToken_, genVtxHandle_);    
-  const SimVertex* genPV = NULL;
-  if(genVtxHandle_.isValid())
-    genPV = &(genVtxHandle_.product()->at(0));
+  event.getByToken(trackLengthsToken_,trackLengthsHandle_);
+  auto trackLengths = *trackLengthsHandle_.product();
+  
+  setup.get<TransientTrackRecord>().get("TransientTrackBuilder", ttrackBuilder);
   
   
-  //---fill the tree - simHits
+  
+  //---fill the tree - gen vertex
+  if( genPV )
+  {
+    outTree_.genVtx_x = genPV->position().x();
+    outTree_.genVtx_y = genPV->position().y();
+    outTree_.genVtx_z = genPV->position().z();
+    outTree_.genVtx_t = genPV->position().t()*1E9; //ns                                                                                                                                                                                    
+  }
+  
+  
+  
+  //---fill the tree - BTL simHits
   outTree_.simHits_n = 0;
   for(auto simHit : simHitsBTL)
   {
@@ -234,8 +252,8 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
     
     double energy = simHit.energyLoss()*1000.;
     double time   = simHit.tof();
-
-    if ((time)<0 || (time)>25) continue;
+    
+    if( (time < 0) || (time >25) ) continue;
     
     int RR = id.mtdRR();
     int module = id.module();
@@ -272,7 +290,21 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
   
   
   
-  //---fill the tree - recHits
+  //---fill the tree - BTL recHits
+  std::map<std::pair<int,int>,std::pair<float,float> > uncalibRecHits_amplitude;
+  std::map<std::pair<int,int>,std::pair<float,float> > uncalibRecHits_time;
+  for(auto recHit : uncalibRecHitsBTL)
+  {
+    BTLDetId id = recHit.id();
+
+    int ieta = id.ieta(crysLayout_);
+    int iphi = id.iphi(crysLayout_);
+    std::pair<float,float> amplitude = recHit.amplitude();
+    std::pair<float,float> time      = recHit.time();
+    uncalibRecHits_amplitude[std::make_pair(ieta,iphi)] = amplitude;
+    uncalibRecHits_time[std::make_pair(ieta,iphi)]      = time;
+  }
+  
   outTree_.recHits_n = 0;
   for(auto recHit : recHitsBTL)
   {
@@ -301,6 +333,8 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
     outTree_.recHits_det->push_back(1);
     outTree_.recHits_energy->push_back(energy);
     outTree_.recHits_time->push_back(time);
+    outTree_.recHits_time_L->push_back(uncalibRecHits_time[std::make_pair(ieta,iphi)].first);
+    outTree_.recHits_time_R->push_back(uncalibRecHits_time[std::make_pair(ieta,iphi)].second);
     outTree_.recHits_rr->push_back(RR);
     outTree_.recHits_module->push_back(module);
     outTree_.recHits_modType->push_back(modType);
@@ -312,81 +346,83 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
     outTree_.recHits_local_z->push_back(lp.z());
     outTree_.recHits_global_R->push_back(sqrt(gp.perp2()));
   }
-
-
-  //---fill the tree - recHits
-  outTree_.clusters_n = 0;
   
-  for (auto clusIt : clustersBTL)
-    {    
-      DetId id = clusIt.detId();
-      const auto& det = mtdGeometry_ -> idToDet(id);
-      const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
-      const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());    
-      for ( auto cluster : clusIt)
-	{
-	  float energy = cluster.energy();
-	  float time   = cluster.time();
-	  float x=cluster.x();
-	  float y=cluster.y();
-	  int size=cluster.size();
-	  int sizeX=cluster.sizeX();
-	  int sizeY=cluster.sizeY();
-	  float seed_energy=cluster.seed().energy();
-	  float seed_time=cluster.seed().time();
-	  int seed_x=cluster.seed().x();
-	  int seed_y=cluster.seed().y();
-	  
-	  MeasurementPoint mp(cluster.x(),cluster.y());
-	  LocalPoint lp = topo.localPosition(mp);
-	  GlobalPoint gp = det->toGlobal(lp);
-	  
-	  MTDDetId mtdId(id);
-	  int RR = 0;
-	  int module = 0;
-	  int modType = 0;
-	  int crystal = 0;
-	  int ieta = 0;
-	  int iphi = 0;
-	  
-	  if ( mtdId.mtdSubDetector() == MTDDetId::BTL )
-	    {
-	      BTLDetId btlId(id);
-	      RR = btlId.mtdRR();
-	      module = btlId.module();
-	      modType = btlId.modType();
-	      crystal = btlId.crystal();
-	      ieta = btlId.ieta(crysLayout_);
-	      iphi = btlId.iphi(crysLayout_);
-	    }
-	  
-	  outTree_.clusters_n += 1;    
-	  outTree_.clusters_det->push_back(1);
-	  outTree_.clusters_size->push_back(size);
-	  outTree_.clusters_size_x->push_back(sizeX);
-	  outTree_.clusters_size_y->push_back(sizeY);
-	  outTree_.clusters_energy->push_back(energy);
-	  outTree_.clusters_time->push_back(time);
-	  outTree_.clusters_rr->push_back(RR);
-	  outTree_.clusters_module->push_back(module);
-	  outTree_.clusters_modType->push_back(modType);
-	  outTree_.clusters_crystal->push_back(crystal);
-	  outTree_.clusters_ieta->push_back(ieta);
-	  outTree_.clusters_iphi->push_back(iphi);
-	  outTree_.clusters_x->push_back(x);
-	  outTree_.clusters_y->push_back(y);
-	  outTree_.clusters_seed_energy->push_back(seed_energy);
-	  outTree_.clusters_seed_time->push_back(seed_time);
-	  outTree_.clusters_seed_x->push_back(seed_x);
-	  outTree_.clusters_seed_y->push_back(seed_y);
-	  outTree_.clusters_local_x->push_back(lp.x());
-	  outTree_.clusters_local_y->push_back(lp.y());
-	  outTree_.clusters_local_z->push_back(lp.z());
-	  outTree_.clusters_global_R->push_back(sqrt(gp.perp2()));
-	}
+  
+  
+  //---fill the tree - BTL clusters
+  outTree_.clusters_n = 0;
+  for(auto clusIt : clustersBTL)
+  {    
+    DetId id = clusIt.detId();
+    const auto& det = mtdGeometry_ -> idToDet(id);
+    const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
+    const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());    
+    for(auto cluster : clusIt)
+    {
+      float energy = cluster.energy();
+      float time   = cluster.time();
+      float x=cluster.x();
+      float y=cluster.y();
+      int size=cluster.size();
+      int sizeX=cluster.sizeX();
+      int sizeY=cluster.sizeY();
+      float seed_energy=cluster.seed().energy();
+      float seed_time=cluster.seed().time();
+      int seed_x=cluster.seed().x();
+      int seed_y=cluster.seed().y();
+      
+      MeasurementPoint mp(cluster.x(),cluster.y());
+      LocalPoint lp = topo.localPosition(mp);
+      GlobalPoint gp = det->toGlobal(lp);
+      
+      MTDDetId mtdId(id);
+      int RR = 0;
+      int module = 0;
+      int modType = 0;
+      int crystal = 0;
+      int ieta = 0;
+      int iphi = 0;
+      
+      if ( mtdId.mtdSubDetector() == MTDDetId::BTL )
+      {
+        BTLDetId btlId(id);
+        RR = btlId.mtdRR();
+        module = btlId.module();
+        modType = btlId.modType();
+        crystal = btlId.crystal();
+        ieta = btlId.ieta(crysLayout_);
+        iphi = btlId.iphi(crysLayout_);
+      }
+      
+      outTree_.clusters_n += 1;    
+      outTree_.clusters_det->push_back(1);
+      outTree_.clusters_size->push_back(size);
+      outTree_.clusters_size_x->push_back(sizeX);
+      outTree_.clusters_size_y->push_back(sizeY);
+      outTree_.clusters_energy->push_back(energy);
+      outTree_.clusters_time->push_back(time);
+      outTree_.clusters_rr->push_back(RR);
+      outTree_.clusters_module->push_back(module);
+      outTree_.clusters_modType->push_back(modType);
+      outTree_.clusters_crystal->push_back(crystal);
+      outTree_.clusters_ieta->push_back(ieta);
+      outTree_.clusters_iphi->push_back(iphi);
+      outTree_.clusters_x->push_back(x);
+      outTree_.clusters_y->push_back(y);
+      outTree_.clusters_seed_energy->push_back(seed_energy);
+      outTree_.clusters_seed_time->push_back(seed_time);
+      outTree_.clusters_seed_x->push_back(seed_x);
+      outTree_.clusters_seed_y->push_back(seed_y);
+      outTree_.clusters_local_x->push_back(lp.x());
+      outTree_.clusters_local_y->push_back(lp.y());
+      outTree_.clusters_local_z->push_back(lp.z());
+      outTree_.clusters_global_R->push_back(sqrt(gp.perp2()));
     }
-
-
+  }
+  
+  
+  
+  //---fill the tree - ETL simHits
   for(auto simHit : simHitsETL)
   {
     ETLDetId id = simHit.detUnitId();
@@ -441,7 +477,7 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
   
   
   
-  //---fill the tree - recHits
+  //---fill the tree - ETL recHits
   for(auto recHit : recHitsETL)
   {
     ETLDetId id = recHit.id();
@@ -468,6 +504,8 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
     outTree_.recHits_det->push_back(2);
     outTree_.recHits_energy->push_back(energy);
     outTree_.recHits_time->push_back(time);
+    outTree_.recHits_time_L->push_back(time);
+    outTree_.recHits_time_R->push_back(time);
     outTree_.recHits_rr->push_back(RR);
     outTree_.recHits_module->push_back(module);
     outTree_.recHits_modType->push_back(modType);
@@ -479,86 +517,93 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
     outTree_.recHits_local_z->push_back(lp.z());
     outTree_.recHits_global_R->push_back(sqrt(gp.perp2()));
   }
-
-
-  //---fill the tree - recHits  
-  for (auto clusIt : clustersETL)
-    {    
-      DetId id = clusIt.detId();
-      const auto& det = mtdGeometry_ -> idToDet(id);
-      const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
-      const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());    
-      for ( auto cluster : clusIt)
-	{
-	  float energy = cluster.energy();
-	  float time   = cluster.time();
-	  float x=cluster.x();
-	  float y=cluster.y();
-	  int size=cluster.size();
-	  int sizeX=cluster.sizeX();
-	  int sizeY=cluster.sizeY();
-	  float seed_energy=cluster.seed().energy();
-	  float seed_time=cluster.seed().time();
-	  int seed_x=cluster.seed().x();
-	  int seed_y=cluster.seed().y();
-	  
-	  MeasurementPoint mp(cluster.x(),cluster.y());
-	  LocalPoint lp = topo.localPosition(mp);
-	  GlobalPoint gp = det->toGlobal(lp);
-	  
-	  MTDDetId mtdId(id);
-	  int RR = 0;
-	  int module = 0;
-	  int modType = 0;
-	  int crystal = 0;
-	  int ieta = 0;
-	  int iphi = 0;
-	  
-	  if ( mtdId.mtdSubDetector() == MTDDetId::ETL )
-	    {
-	      ETLDetId btlId(id);
-	      RR = btlId.mtdRR();
-	      module = btlId.module();
-	      modType = btlId.modType();
-	      // crystal = btlId.crystal();
-	      // ieta = btlId.ieta();
-	      // iphi = btlId.iphi();
-	    }
-	  
-	  outTree_.clusters_n += 1;    
-	  outTree_.clusters_det->push_back(2);
-	  outTree_.clusters_size->push_back(size);
-	  outTree_.clusters_size_x->push_back(sizeX);
-	  outTree_.clusters_size_y->push_back(sizeY);
-	  outTree_.clusters_energy->push_back(energy);
-	  outTree_.clusters_time->push_back(time);
-	  outTree_.clusters_rr->push_back(RR);
-	  outTree_.clusters_module->push_back(module);
-	  outTree_.clusters_modType->push_back(modType);
-	  outTree_.clusters_crystal->push_back(crystal);
-	  outTree_.clusters_ieta->push_back(ieta);
-	  outTree_.clusters_iphi->push_back(iphi);
-	  outTree_.clusters_x->push_back(x);
-	  outTree_.clusters_y->push_back(y);
-	  outTree_.clusters_seed_energy->push_back(seed_energy);
-	  outTree_.clusters_seed_time->push_back(seed_time);
-	  outTree_.clusters_seed_x->push_back(seed_x);
-	  outTree_.clusters_seed_y->push_back(seed_y);
-	  outTree_.clusters_local_x->push_back(lp.x());
-	  outTree_.clusters_local_y->push_back(lp.y());
-	  outTree_.clusters_local_z->push_back(lp.z());
-	  outTree_.clusters_global_R->push_back(sqrt(gp.perp2()));
-	}
+  
+  
+  
+  //---fill the tree - ETL clusters
+  for(auto clusIt : clustersETL)
+  {    
+    DetId id = clusIt.detId();
+    const auto& det = mtdGeometry_ -> idToDet(id);
+    const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
+    const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());    
+    for(auto cluster : clusIt)
+    {
+      float energy = cluster.energy();
+      float time   = cluster.time();
+      float x=cluster.x();
+      float y=cluster.y();
+      int size=cluster.size();
+      int sizeX=cluster.sizeX();
+      int sizeY=cluster.sizeY();
+      float seed_energy=cluster.seed().energy();
+      float seed_time=cluster.seed().time();
+      int seed_x=cluster.seed().x();
+      int seed_y=cluster.seed().y();
+      
+      MeasurementPoint mp(cluster.x(),cluster.y());
+      LocalPoint lp = topo.localPosition(mp);
+      GlobalPoint gp = det->toGlobal(lp);
+      
+      MTDDetId mtdId(id);
+      int RR = 0;
+      int module = 0;
+      int modType = 0;
+      int crystal = 0;
+      int ieta = 0;
+      int iphi = 0;
+      
+      if( mtdId.mtdSubDetector() == MTDDetId::ETL )
+      {
+        ETLDetId btlId(id);
+        RR = btlId.mtdRR();
+        module = btlId.module();
+        modType = btlId.modType();
+        // crystal = btlId.crystal();
+        // ieta = btlId.ieta();
+        // iphi = btlId.iphi();
+      }
+      
+      outTree_.clusters_n += 1;    
+      outTree_.clusters_det->push_back(2);
+      outTree_.clusters_size->push_back(size);
+      outTree_.clusters_size_x->push_back(sizeX);
+      outTree_.clusters_size_y->push_back(sizeY);
+      outTree_.clusters_energy->push_back(energy);
+      outTree_.clusters_time->push_back(time);
+      outTree_.clusters_rr->push_back(RR);
+      outTree_.clusters_module->push_back(module);
+      outTree_.clusters_modType->push_back(modType);
+      outTree_.clusters_crystal->push_back(crystal);
+      outTree_.clusters_ieta->push_back(ieta);
+      outTree_.clusters_iphi->push_back(iphi);
+      outTree_.clusters_x->push_back(x);
+      outTree_.clusters_y->push_back(y);
+      outTree_.clusters_seed_energy->push_back(seed_energy);
+      outTree_.clusters_seed_time->push_back(seed_time);
+      outTree_.clusters_seed_x->push_back(seed_x);
+      outTree_.clusters_seed_y->push_back(seed_y);
+      outTree_.clusters_local_x->push_back(lp.x());
+      outTree_.clusters_local_y->push_back(lp.y());
+      outTree_.clusters_local_z->push_back(lp.z());
+      outTree_.clusters_global_R->push_back(sqrt(gp.perp2()));
     }
-
+  }
+  
+  
+  
+  
+  
+  
   //--- fill the tree - tracks
   int idx=0;
-  for(unsigned iTrack = 0; iTrack < tracks.size(); ++iTrack)
+  for(edm::View<reco::Track>::size_type iTrack = 0; iTrack < tracks.size(); ++iTrack)
   {
     auto track = tracks.at(iTrack);
+    auto trackRef = tracks.refAt(iTrack);
+    
     // skip neutrals
     if( track.charge() == 0 ) continue;
-    //    if( fabs(track.eta()) > 1.5 ) continue;
     if( track.pt() < 0.7 ) continue;
     
     // match with gen particles
@@ -587,20 +632,20 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
       }
     }
     
-    if (genPV)
-      {
-        outTree_.track_mcMatch_genVtx_x -> push_back(genPV->position().x());
-        outTree_.track_mcMatch_genVtx_y -> push_back(genPV->position().y());
-        outTree_.track_mcMatch_genVtx_z -> push_back(genPV->position().z());
-        outTree_.track_mcMatch_genVtx_t -> push_back(genPV->position().t()*1E9); //ns
-      }
+    if( genPV )
+    {
+      outTree_.track_mcMatch_genVtx_x -> push_back(genPV->position().x());
+      outTree_.track_mcMatch_genVtx_y -> push_back(genPV->position().y());
+      outTree_.track_mcMatch_genVtx_z -> push_back(genPV->position().z());
+      outTree_.track_mcMatch_genVtx_t -> push_back(genPV->position().t()*1E9); //ns
+    }
     else
-      {
-        outTree_.track_mcMatch_genVtx_x -> push_back(-999.);
-        outTree_.track_mcMatch_genVtx_y -> push_back(-999.);
-        outTree_.track_mcMatch_genVtx_z -> push_back(-999.);
-        outTree_.track_mcMatch_genVtx_t -> push_back(-999.);
-      }
+    {
+      outTree_.track_mcMatch_genVtx_x -> push_back(-999.);
+      outTree_.track_mcMatch_genVtx_y -> push_back(-999.);
+      outTree_.track_mcMatch_genVtx_z -> push_back(-999.);
+      outTree_.track_mcMatch_genVtx_t -> push_back(-999.);
+    }
     
     outTree_.track_idx -> push_back(idx);
     outTree_.track_pt -> push_back(track.pt());
@@ -610,6 +655,7 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
     outTree_.track_y -> push_back(track.vy());
     outTree_.track_z -> push_back(track.vz());
     outTree_.track_t -> push_back(track.t0());
+    outTree_.track_length -> push_back(trackLengths[trackRef]);
     outTree_.track_energy -> push_back(sqrt(track.momentum().mag2()));
     outTree_.track_normalizedChi2 -> push_back(track.normalizedChi2());
     outTree_.track_numberOfValidHits -> push_back(track.numberOfValidHits());
@@ -624,7 +670,6 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
         
     if( verbosity_ ) std::cout << "*** track " << iTrack << " / " << tracks.size() << "   pt: " << track.pt() << "   eta: " << track.eta() << "   phi: " << track.phi() << std::endl;
     if( verbosity_ ) std::cout << "*** match with gen particle   DR: " << DRMin << "   gen pdgId: " << genPdgId << "   gen eta: " << genEta << "   gen phi: " << genPhi << "   genPt: " << genPt << std::endl;
-    if( verbosity_ ) std::cout << "---" << std::endl;
     
     outTree_.matchedSimHits_n->resize(idx+1);
     outTree_.matchedRecHits_n->resize(idx+1);
@@ -659,6 +704,8 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
     outTree_.matchedRecHits_energy->resize(idx+1);
     outTree_.matchedRecHits_energyCorr->resize(idx+1);
     outTree_.matchedRecHits_time->resize(idx+1);
+    outTree_.matchedRecHits_time_L->resize(idx+1);
+    outTree_.matchedRecHits_time_R->resize(idx+1);
     outTree_.matchedRecHits_rr->resize(idx+1);
     outTree_.matchedRecHits_module->resize(idx+1);
     outTree_.matchedRecHits_modType->resize(idx+1);
@@ -704,70 +751,104 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
         
     //---get compatible layers/Dets
     std::vector<GlobalPoint> gp_ext;
-    auto tTrack = builder->build(track);
+    std::vector<LocalPoint> lp_ext;
+    auto tTrack = ttrackBuilder->build(track);
     TrajectoryStateOnSurface tsos = tTrack.outermostMeasurementState();
     float theMaxChi2 = 25.;
     float theNSigma = 5.;
     std::unique_ptr<MeasurementEstimator> theEstimator = std::make_unique<Chi2MeasurementEstimator>(theMaxChi2,theNSigma);
     SteppingHelixPropagator prop(theField.product(),anyDirection);
-
+    
     //try BTL
-    bool inBTL=false;
+    bool inBTL = false;
     const vector<const DetLayer*>& layersBTL = layerGeo->allBTLLayers();
-    for (const DetLayer* ilay : layersBTL) 
-      {
-	pair<bool, TrajectoryStateOnSurface> comp = ilay->compatible(tsos,prop,*theEstimator);	
-	if (!comp.first) continue;
-	vector<DetLayer::DetWithState> compDets = ilay->compatibleDets(tsos,prop,*theEstimator);
-	for( const auto& detWithState : compDets ) 
-	  {
-	    gp_ext.push_back(detWithState.second.globalPosition());
-	    if (!inBTL)
-	      {
-		outTree_.track_eta_atBTL -> push_back(gp_ext.back().eta());
-		outTree_.track_phi_atBTL -> push_back(gp_ext.back().phi());
-		inBTL=true;
-	      }
-	  }
-      }
-
-    //try ETL
-    bool inETL=false;
-    const vector<const DetLayer*>& layersETL = layerGeo->allETLLayers();
-    for (const DetLayer* ilay : layersETL) 
-      {
-	const BoundDisk& disk = static_cast<const MTDRingForwardDoubleLayer*>(ilay)->specificSurface();
-	const double diskZ = disk.position().z();
-	if( tsos.globalPosition().z() * diskZ < 0 ) continue; // only propagate to the disk that's on the same side
-	pair<bool, TrajectoryStateOnSurface> comp = ilay->compatible(tsos,prop,*theEstimator);	
-	if (!comp.first) continue;
-	vector<DetLayer::DetWithState> compDets = ilay->compatibleDets(tsos,prop,*theEstimator);
-	for( const auto& detWithState : compDets ) 
-	  {
-	    gp_ext.push_back(detWithState.second.globalPosition());
-	    if (!inETL)
-	      {
-		outTree_.track_eta_atETL -> push_back(gp_ext.back().eta());
-		outTree_.track_phi_atETL -> push_back(gp_ext.back().phi());
-		inETL=true;
-	      }
-	  }
-      }
-
-    if( !inBTL )
-      {
-	outTree_.track_eta_atBTL -> push_back(-999.);
-	outTree_.track_phi_atBTL -> push_back(-999.);
-      }
-
-    if( !inETL )
-      {
-	outTree_.track_eta_atETL -> push_back(-999.);
-	outTree_.track_phi_atETL -> push_back(-999.);
-      }
-
+    for(const DetLayer* ilay : layersBTL) 
     {
-    //---get associated simHits
+      pair<bool, TrajectoryStateOnSurface> comp = ilay->compatible(tsos,prop,*theEstimator);	
+      if (!comp.first) continue;
+      vector<DetLayer::DetWithState> compDets = ilay->compatibleDets(tsos,prop,*theEstimator);
+      for( const auto& detWithState : compDets ) 
+      {
+        const auto& det = detWithState.first;
+        const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
+        const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());
+        
+        gp_ext.push_back(detWithState.second.globalPosition());
+        lp_ext.push_back(topo.moduleToPixelLocalPoint(det->toLocal(gp_ext.back())));
+        if( !inBTL )
+        {
+          outTree_.track_eta_atBTL -> push_back(gp_ext.back().eta());
+          outTree_.track_phi_atBTL -> push_back(gp_ext.back().phi());
+          outTree_.track_local_x_atBTL -> push_back(lp_ext.back().x());
+          outTree_.track_local_y_atBTL -> push_back(lp_ext.back().y());
+          outTree_.track_local_z_atBTL -> push_back(lp_ext.back().z());
+          outTree_.track_global_R_atBTL -> push_back(sqrt(gp_ext.back().perp2()));
+          inBTL = true;
+          
+             if( verbosity_ )
+               std::cout << ">>> extrapolated point in BTL:   global: " << gp_ext.back() << "   local: " << lp_ext.back() << std::endl;
+        }
+      }
+    }
+    
+    //try ETL
+    bool inETL = false;
+    const vector<const DetLayer*>& layersETL = layerGeo->allETLLayers();
+    for(const DetLayer* ilay : layersETL) 
+    {
+      const BoundDisk& disk = static_cast<const MTDRingForwardDoubleLayer*>(ilay)->specificSurface();
+      const double diskZ = disk.position().z();
+      if( tsos.globalPosition().z() * diskZ < 0 ) continue; // only propagate to the disk that's on the same side
+      pair<bool, TrajectoryStateOnSurface> comp = ilay->compatible(tsos,prop,*theEstimator);	
+      if (!comp.first) continue;
+      vector<DetLayer::DetWithState> compDets = ilay->compatibleDets(tsos,prop,*theEstimator);
+      for( const auto& detWithState : compDets ) 
+      {
+        const auto& det = detWithState.first;
+        const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
+        const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());
+        
+        gp_ext.push_back(detWithState.second.globalPosition());
+        lp_ext.push_back(topo.moduleToPixelLocalPoint(detWithState.first->toLocal(gp_ext.back())));
+        if( !inETL )
+        {
+          outTree_.track_eta_atETL -> push_back(gp_ext.back().eta());
+          outTree_.track_phi_atETL -> push_back(gp_ext.back().phi());
+          outTree_.track_local_x_atETL -> push_back(lp_ext.back().x());
+          outTree_.track_local_y_atETL -> push_back(lp_ext.back().y());
+          outTree_.track_local_z_atETL -> push_back(lp_ext.back().z());
+          outTree_.track_global_R_atETL -> push_back(sqrt(gp_ext.back().perp2()));
+          inETL=true;
+          
+          if( verbosity_ )
+            std::cout << ">>> extrapolated point in ETL:   global: " << gp_ext.back() << "   local: " << lp_ext.back() << std::endl;
+        }
+      }
+    }
+    
+    if( !inBTL )
+    {
+      outTree_.track_eta_atBTL -> push_back(-999.);
+      outTree_.track_phi_atBTL -> push_back(-999.);
+      outTree_.track_local_x_atBTL -> push_back(-999.);
+      outTree_.track_local_y_atBTL -> push_back(-999.);
+      outTree_.track_local_z_atBTL -> push_back(-999.);
+      outTree_.track_global_R_atBTL -> push_back(-999.);
+    }
+    
+    if( !inETL )
+    {
+      outTree_.track_eta_atETL -> push_back(-999.);
+      outTree_.track_phi_atETL -> push_back(-999.);
+      outTree_.track_local_x_atETL -> push_back(-999.);
+      outTree_.track_local_y_atETL -> push_back(-999.);
+      outTree_.track_local_z_atETL -> push_back(-999.);
+      outTree_.track_global_R_atETL -> push_back(-999.);
+    }
+    if( verbosity_ ) std::cout << "---" << std::endl;
+
+    
+    //---get associated BTL simHits
     if( verbosity_ ) std::cout << "*** simHits - n tot: " << simHitsBTL.size() << std::endl;
     int simHitIt = 0;
     for(auto simHit : simHitsBTL)
@@ -780,7 +861,7 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
       
       double energy = simHit.energyLoss()*1000.;
       double time   = simHit.tof();
-
+      
       if ((time)<0 || (time)>25) continue;
       int RR = id.mtdRR();
       int module = id.module();
@@ -798,25 +879,24 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
       
       float eta = gp_mid.eta();
       float phi = gp_mid.phi();
-
+      
       int closestPoint=-1;
       float minDist=999;
       for (unsigned int ic=0; ic<gp_ext.size();++ic)
-	{
-	  GlobalPoint diff(gp_ext[ic].x()-gp_mid.x(),gp_ext[ic].y()-gp_mid.y(),gp_ext[ic].z()-gp_mid.z());
-	  if (diff.mag()<minDist)
-	    {
-	      closestPoint=ic;
-	      minDist=diff.mag();
-	    }
-	}
-
+      {
+        GlobalPoint diff(gp_ext[ic].x()-gp_mid.x(),gp_ext[ic].y()-gp_mid.y(),gp_ext[ic].z()-gp_mid.z());
+        if (diff.mag()<minDist)
+        {
+          closestPoint=ic;
+          minDist=diff.mag();
+        }
+      }
+      
       if (closestPoint == -1)
-	continue;
-
+        continue;
+      
       GlobalPoint gp_track = gp_ext[closestPoint];      
-      //GlobalPoint gp_track = gp_ext[abs(id.row(topo.nrows())-int())];
-
+      
       float Deta  = gp_track.mag() > 0. ? eta-gp_track.eta()           : -999.;
       float Dphi  = gp_track.mag() > 0. ? deltaPhi(phi,gp_track.phi()) : -999.;
       float DR    = gp_track.mag() > 0. ? sqrt(Deta*Deta+Dphi*Dphi)    : -999.;
@@ -871,7 +951,7 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
     if( verbosity_ ) std::cout << "---" << std::endl;
     
     
-    //---find associated recHits
+    //---find associated BTL recHits
     float sieie=0, sipip=0;
     float ss_hit_count=0;
     int recHitIt = 0;
@@ -904,20 +984,18 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
       int closestPoint=-1;
       float minDist=999;
       for (unsigned int ic=0; ic<gp_ext.size();++ic)
-	{
-	  GlobalPoint diff(gp_ext[ic].x()-gp.x(),gp_ext[ic].y()-gp.y(),gp_ext[ic].z()-gp.z());
-	  if (diff.mag()<minDist)
-	    {
-	      closestPoint=ic;
-	      minDist=diff.mag();
-	    }
-	}
+      {
+        GlobalPoint diff(gp_ext[ic].x()-gp.x(),gp_ext[ic].y()-gp.y(),gp_ext[ic].z()-gp.z());
+        if( diff.mag() < minDist )
+        {
+          closestPoint=ic;
+          minDist=diff.mag();
+        }
+      }
       
-      if (closestPoint == -1)
-	continue;
-
+      if (closestPoint == -1) continue;
+      
       GlobalPoint gp_track = gp_ext[closestPoint];      
-      //      GlobalPoint gp_track = gp_ext[abs(id.row(topo.nrows())-int())];
       
       float Deta  = gp_track.mag() > 0. ? eta-gp_track.eta()           : -999.;
       float Dphi  = gp_track.mag() > 0. ? deltaPhi(phi,gp_track.phi()) : -999.;
@@ -946,6 +1024,8 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
       outTree_.matchedRecHits_energy->at(idx).push_back(energy);
       outTree_.matchedRecHits_energyCorr->at(idx).push_back(energy*fabs(sin(track.theta())));
       outTree_.matchedRecHits_time->at(idx).push_back(time);
+      outTree_.matchedRecHits_time_L->at(idx).push_back(uncalibRecHits_time[std::make_pair(ieta,iphi)].first);
+      outTree_.matchedRecHits_time_R->at(idx).push_back(uncalibRecHits_time[std::make_pair(ieta,iphi)].second);
       outTree_.matchedRecHits_rr->at(idx).push_back(RR);
       outTree_.matchedRecHits_module->at(idx).push_back(module);
       outTree_.matchedRecHits_modType->at(idx).push_back(modType);
@@ -972,135 +1052,127 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
       
       ++recHitIt;
     }
-  
-    //---find associated recHits
-    int clusterIt = 0;
-
-    for (auto clusIt : clustersBTL)
-      {    
-	DetId id = clusIt.detId();
-	const auto& det = mtdGeometry_ -> idToDet(id);
-	const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
-	const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());    
-	for ( auto cluster : clusIt)
-	  {
-	    
-	    MTDDetId mtdId(id);
-	    int RR = 0;
-	    int module = 0;
-	    int modType = 0;
-	    int crystal = 0;
-	    int ieta = 0;
-	    int iphi = 0;
-	    
-	    if ( mtdId.mtdSubDetector() == MTDDetId::BTL )
-	      {
-		BTLDetId btlId(id);
-		RR = btlId.mtdRR();
-		module = btlId.module();
-		modType = btlId.modType();
-		crystal = btlId.crystal();
-		ieta = btlId.ieta(crysLayout_);
-		iphi = btlId.iphi(crysLayout_);
-	      }
-	    
-	    double energy = cluster.energy();
-	    double time   = cluster.time();
-	    int size=cluster.size();
-	    int sizeX=cluster.sizeX();
-	    int sizeY=cluster.sizeY();
-	    
-	    MeasurementPoint mp(cluster.x(),cluster.y());
-	    LocalPoint lp = topo.localPosition(mp);
-	    GlobalPoint gp = det->toGlobal(lp);
-	    
-	    float eta = gp.eta();
-	    float phi = gp.phi();
-	    
-	    int closestPoint=-1;
-	    float minDist=999;
-	    for (unsigned int ic=0; ic<gp_ext.size();++ic)
-	      {
-		GlobalPoint diff(gp_ext[ic].x()-gp.x(),gp_ext[ic].y()-gp.y(),gp_ext[ic].z()-gp.z());
-		if (diff.mag()<minDist)
-		  {
-		    closestPoint=ic;
-		    minDist=diff.mag();
-		  }
-	      }
-	    
-	    if (closestPoint == -1)
-	      continue;
-
-	    GlobalPoint gp_track = gp_ext[closestPoint];      
-	    //	    GlobalPoint gp_track = gp_ext[abs(cluster.seed().x-int())];
-	    
-	    float Deta  = gp_track.mag() > 0. ? eta-gp_track.eta()           : -999.;
-	    float Dphi  = gp_track.mag() > 0. ? deltaPhi(phi,gp_track.phi()) : -999.;
-	    float DR    = gp_track.mag() > 0. ? sqrt(Deta*Deta+Dphi*Dphi)    : -999.;
-	    float Dz    = gp_track.mag() > 0. ? gp_track.z()-gp.z()          : -999.;
-	    float RDphi = gp_track.mag() > 0. ? sqrt(gp_track.perp2())*Dphi  : -999.;
-	    float dist  = gp_track.mag() > 0. ? (gp-gp_track).mag()          : -999.;
-	    	    
-	    
-	    if( DR > track_hit_DRMax_ || dist > track_hit_distMax_ ) continue;
-	    if( gp_track.mag() <= 0. ) continue;
-	    
-	    outTree_.matchedClusters_n->at(idx) += 1;
-	    
-	    outTree_.matchedClusters_idx->at(idx).push_back(idx);
-	    outTree_.matchedClusters_det->at(idx).push_back(1);
-	    outTree_.matchedClusters_energy->at(idx).push_back(energy);
-	    outTree_.matchedClusters_energyCorr->at(idx).push_back(energy*fabs(sin(track.theta())));
-	    outTree_.matchedClusters_time->at(idx).push_back(time);
-	    outTree_.matchedClusters_rr->at(idx).push_back(RR);
-	    outTree_.matchedClusters_module->at(idx).push_back(module);
-	    outTree_.matchedClusters_modType->at(idx).push_back(modType);
-	    outTree_.matchedClusters_crystal->at(idx).push_back(crystal);
-	    outTree_.matchedClusters_ieta->at(idx).push_back(ieta);
-	    outTree_.matchedClusters_iphi->at(idx).push_back(iphi);
-	    outTree_.matchedClusters_size->at(idx).push_back(size);
-	    outTree_.matchedClusters_size_x->at(idx).push_back(sizeX);
-	    outTree_.matchedClusters_size_y->at(idx).push_back(sizeY);
-	    outTree_.matchedClusters_local_x->at(idx).push_back(lp.x());
-	    outTree_.matchedClusters_local_y->at(idx).push_back(lp.y());
-	    outTree_.matchedClusters_local_z->at(idx).push_back(lp.z());
-	    outTree_.matchedClusters_global_R->at(idx).push_back(sqrt(gp.perp2()));
-	    outTree_.matchedClusters_track_Deta->at(idx).push_back(fabs(Deta));
-	    outTree_.matchedClusters_track_Dphi->at(idx).push_back(fabs(Dphi));
-	    outTree_.matchedClusters_track_Dz->at(idx).push_back(Dz);
-	    outTree_.matchedClusters_track_RDphi->at(idx).push_back(RDphi);
-	    outTree_.matchedClusters_track_DR->at(idx).push_back(DR);
-	    outTree_.matchedClusters_track_dist->at(idx).push_back(dist);
-	    
-	    ++clusterIt;
-	  }
-      }
-  
-  
-    if( verbosity_ ) std::cout << "---\n\n\n" << std::endl;
-    
     outTree_.matchedRecHits_sietaieta->at(idx).push_back( ss_hit_count>0 ? sqrt(sieie)/ss_hit_count : -999. );
     outTree_.matchedRecHits_siphiiphi->at(idx).push_back( ss_hit_count>0 ? sqrt(sipip)/ss_hit_count : -999. );
-
+    
+    
+    //---find associated BTL clusters
+    int clusterIt = 0;
+    for(auto clusIt : clustersBTL)
+    {    
+      DetId id = clusIt.detId();
+      const auto& det = mtdGeometry_ -> idToDet(id);
+      const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
+      const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());    
+      for(auto cluster : clusIt)
+      {
+        MTDDetId mtdId(id);
+        int RR = 0;
+        int module = 0;
+        int modType = 0;
+        int crystal = 0;
+        int ieta = 0;
+        int iphi = 0;
+        
+        if( mtdId.mtdSubDetector() == MTDDetId::BTL )
+        {
+          BTLDetId btlId(id);
+          RR = btlId.mtdRR();
+          module = btlId.module();
+          modType = btlId.modType();
+          crystal = btlId.crystal();
+          ieta = btlId.ieta(crysLayout_);
+          iphi = btlId.iphi(crysLayout_);
+        }
+        
+        double energy = cluster.energy();
+        double time   = cluster.time();
+        int size=cluster.size();
+        int sizeX=cluster.sizeX();
+        int sizeY=cluster.sizeY();
+        
+        MeasurementPoint mp(cluster.x(),cluster.y());
+        LocalPoint lp = topo.localPosition(mp);
+        GlobalPoint gp = det->toGlobal(lp);
+        
+        float eta = gp.eta();
+        float phi = gp.phi();
+        
+        int closestPoint=-1;
+        float minDist=999;
+        for(unsigned int ic=0; ic<gp_ext.size();++ic)
+        {
+          GlobalPoint diff(gp_ext[ic].x()-gp.x(),gp_ext[ic].y()-gp.y(),gp_ext[ic].z()-gp.z());
+          if (diff.mag()<minDist)
+          {
+            closestPoint=ic;
+            minDist=diff.mag();
+          }
+        }
+        
+        if( closestPoint == -1 ) continue;
+        
+        GlobalPoint gp_track = gp_ext[closestPoint];      
+        
+        float Deta  = gp_track.mag() > 0. ? eta-gp_track.eta()           : -999.;
+        float Dphi  = gp_track.mag() > 0. ? deltaPhi(phi,gp_track.phi()) : -999.;
+        float DR    = gp_track.mag() > 0. ? sqrt(Deta*Deta+Dphi*Dphi)    : -999.;
+        float Dz    = gp_track.mag() > 0. ? gp_track.z()-gp.z()          : -999.;
+        float RDphi = gp_track.mag() > 0. ? sqrt(gp_track.perp2())*Dphi  : -999.;
+        float dist  = gp_track.mag() > 0. ? (gp-gp_track).mag()          : -999.;
+	
+	
+        if( DR > track_hit_DRMax_ || dist > track_hit_distMax_ ) continue;
+        if( gp_track.mag() <= 0. ) continue;
+        
+        outTree_.matchedClusters_n->at(idx) += 1;
+	
+        outTree_.matchedClusters_idx->at(idx).push_back(idx);
+        outTree_.matchedClusters_det->at(idx).push_back(1);
+        outTree_.matchedClusters_energy->at(idx).push_back(energy);
+        outTree_.matchedClusters_energyCorr->at(idx).push_back(energy*fabs(sin(track.theta())));
+        outTree_.matchedClusters_time->at(idx).push_back(time);
+        outTree_.matchedClusters_rr->at(idx).push_back(RR);
+        outTree_.matchedClusters_module->at(idx).push_back(module);
+        outTree_.matchedClusters_modType->at(idx).push_back(modType);
+        outTree_.matchedClusters_crystal->at(idx).push_back(crystal);
+        outTree_.matchedClusters_ieta->at(idx).push_back(ieta);
+        outTree_.matchedClusters_iphi->at(idx).push_back(iphi);
+        outTree_.matchedClusters_size->at(idx).push_back(size);
+        outTree_.matchedClusters_size_x->at(idx).push_back(sizeX);
+        outTree_.matchedClusters_size_y->at(idx).push_back(sizeY);
+        outTree_.matchedClusters_local_x->at(idx).push_back(lp.x());
+        outTree_.matchedClusters_local_y->at(idx).push_back(lp.y());
+        outTree_.matchedClusters_local_z->at(idx).push_back(lp.z());
+        outTree_.matchedClusters_global_R->at(idx).push_back(sqrt(gp.perp2()));
+        outTree_.matchedClusters_track_Deta->at(idx).push_back(fabs(Deta));
+        outTree_.matchedClusters_track_Dphi->at(idx).push_back(fabs(Dphi));
+        outTree_.matchedClusters_track_Dz->at(idx).push_back(Dz);
+        outTree_.matchedClusters_track_RDphi->at(idx).push_back(RDphi);
+        outTree_.matchedClusters_track_DR->at(idx).push_back(DR);
+        outTree_.matchedClusters_track_dist->at(idx).push_back(dist);
+	
+        ++clusterIt;
+      }
     }
-    ///ETL
-    {
-    //---get associated simHits
+    if( verbosity_ ) std::cout << "---\n\n\n" << std::endl;
+    
+    
+    //---get associated ETL simHits
     if( verbosity_ ) std::cout << "*** simHits - n tot: " << simHitsETL.size() << std::endl;
-    int simHitIt = 0;
+    simHitIt = 0;
     for(auto simHit : simHitsETL)
     {
       ETLDetId id = simHit.detUnitId();
-      DetId geoId = id.geographicalId(  );
+      DetId geoId = id.geographicalId();
       const auto& det = mtdGeometry_ -> idToDet(geoId);
       const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
       const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());
       
       double energy = simHit.energyLoss()*1000.;
       double time   = simHit.tof();
-
-      if ((time)<0 || (time)>25) continue;
+      
+      if( (time < 0) || (time > 25) ) continue;
       
       int RR = id.mtdRR();
       int module = id.module();
@@ -1108,7 +1180,7 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
       int crystal = 0;
       int ieta = 0;
       int iphi = 0;
-
+      
       // ETL is already in module-local coordinates so just scale to cm from mm
       Local3DPoint simscaled(0.1*simHit.entryPoint().x(),0.1*simHit.entryPoint().y(),0.1*simHit.entryPoint().z());
       const auto& thepixel = topo.pixel(simscaled); // mm -> cm here is the switch                               
@@ -1126,21 +1198,20 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
 
       int closestPoint=-1;
       float minDist=999;
-      for (unsigned int ic=0; ic<gp_ext.size();++ic)
-	{
-	  GlobalPoint diff(gp_ext[ic].x()-gp_mid.x(),gp_ext[ic].y()-gp_mid.y(),gp_ext[ic].z()-gp_mid.z());
-	  if (diff.mag()<minDist)
-	    {
-	      closestPoint=ic;
-	      minDist=diff.mag();
-	    }
-	}
-
-      if (closestPoint == -1)
-	continue;
-
+      for(unsigned int ic=0; ic<gp_ext.size();++ic)
+      {
+        GlobalPoint diff(gp_ext[ic].x()-gp_mid.x(),gp_ext[ic].y()-gp_mid.y(),gp_ext[ic].z()-gp_mid.z());
+        if (diff.mag()<minDist)
+        {
+          closestPoint=ic;
+          minDist=diff.mag();
+        }
+      }
+      
+      if( closestPoint == -1 ) continue;
+      
       GlobalPoint gp_track = gp_ext[closestPoint];      
-
+      
       float Deta  = gp_track.mag() > 0. ? eta-gp_track.eta()           : -999.;
       float Dphi  = gp_track.mag() > 0. ? deltaPhi(phi,gp_track.phi()) : -999.;
       float DR    = gp_track.mag() > 0. ? sqrt(Deta*Deta+Dphi*Dphi)    : -999.;
@@ -1194,10 +1265,10 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
     if( verbosity_ ) std::cout << "---" << std::endl;
     
     
-    //---find associated recHits
-    float sieie=0, sipip=0;
-    float ss_hit_count=0;
-    int recHitIt = 0;
+    //---find associated ETL recHits
+    sieie=0; sipip=0;
+    ss_hit_count=0;
+    recHitIt = 0;
     if( verbosity_ ) std::cout << "*** recHits - tot: " << recHitsETL.size() << std::endl;
     for(auto recHit : recHitsETL)
     {
@@ -1227,18 +1298,17 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
       int closestPoint=-1;
       float minDist=999;
       for (unsigned int ic=0; ic<gp_ext.size();++ic)
-	{
-	  GlobalPoint diff(gp_ext[ic].x()-gp.x(),gp_ext[ic].y()-gp.y(),gp_ext[ic].z()-gp.z());
-	  if (diff.mag()<minDist)
-	    {
-	      closestPoint=ic;
-	      minDist=diff.mag();
-	    }
-	}
+      {
+        GlobalPoint diff(gp_ext[ic].x()-gp.x(),gp_ext[ic].y()-gp.y(),gp_ext[ic].z()-gp.z());
+        if( diff.mag() < minDist )
+        {
+          closestPoint=ic;
+          minDist=diff.mag();
+        }
+      }
       
-      if (closestPoint == -1)
-	continue;
-
+      if( closestPoint == -1 ) continue;
+      
       GlobalPoint gp_track = gp_ext[closestPoint];      
       
       float Deta  = gp_track.mag() > 0. ? eta-gp_track.eta()           : -999.;
@@ -1267,6 +1337,8 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
       outTree_.matchedRecHits_energy->at(idx).push_back(energy);
       outTree_.matchedRecHits_energyCorr->at(idx).push_back(energy*fabs(sin(track.theta())));
       outTree_.matchedRecHits_time->at(idx).push_back(time);
+      outTree_.matchedRecHits_time_L->at(idx).push_back(time);
+      outTree_.matchedRecHits_time_R->at(idx).push_back(time);
       outTree_.matchedRecHits_rr->at(idx).push_back(RR);
       outTree_.matchedRecHits_module->at(idx).push_back(module);
       outTree_.matchedRecHits_modType->at(idx).push_back(modType);
@@ -1293,115 +1365,111 @@ void FTLDumpHits::analyze(edm::Event const& event, edm::EventSetup const& setup)
       
       ++recHitIt;
     }
-  
-    //---find associated recHits
-    int clusterIt = 0;
-
-    for (auto clusIt : clustersETL)
-      {    
-	DetId id = clusIt.detId();
-	const auto& det = mtdGeometry_ -> idToDet(id);
-	const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
-	const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());    
-	for ( auto cluster : clusIt)
-	  {
-	    
-	    MTDDetId mtdId(id);
-	    int RR = 0;
-	    int module = 0;
-	    int modType = 0;
-	    int crystal = 0;
-	    int ieta = 0;
-	    int iphi = 0;
-	    
-	    if ( mtdId.mtdSubDetector() == MTDDetId::ETL )
-	      {
-		ETLDetId btlId(id);
-		RR = btlId.mtdRR();
-		module = btlId.module();
-		modType = btlId.modType();
-		// crystal = btlId.crystal();
-		// ieta = btlId.ieta();
-		// iphi = btlId.iphi();
-	      }
-	    
-	    double energy = cluster.energy();
-	    double time   = cluster.time();
-	    int size=cluster.size();
-	    int sizeX=cluster.sizeX();
-	    int sizeY=cluster.sizeY();
-	    
-	    MeasurementPoint mp(cluster.x(),cluster.y());
-	    LocalPoint lp = topo.localPosition(mp);
-	    GlobalPoint gp = det->toGlobal(lp);
-	    
-	    float eta = gp.eta();
-	    float phi = gp.phi();
-	    
-	    int closestPoint=-1;
-	    float minDist=999;
-	    for (unsigned int ic=0; ic<gp_ext.size();++ic)
-	      {
-		GlobalPoint diff(gp_ext[ic].x()-gp.x(),gp_ext[ic].y()-gp.y(),gp_ext[ic].z()-gp.z());
-		if (diff.mag()<minDist)
-		  {
-		    closestPoint=ic;
-		    minDist=diff.mag();
-		  }
-	      }
-	    
-	    if (closestPoint == -1)
-	      continue;
-
-	    GlobalPoint gp_track = gp_ext[closestPoint];      
-	    
-	    float Deta  = gp_track.mag() > 0. ? eta-gp_track.eta()           : -999.;
-	    float Dphi  = gp_track.mag() > 0. ? deltaPhi(phi,gp_track.phi()) : -999.;
-	    float DR    = gp_track.mag() > 0. ? sqrt(Deta*Deta+Dphi*Dphi)    : -999.;
-	    float Dz    = gp_track.mag() > 0. ? gp_track.z()-gp.z()          : -999.;
-	    float RDphi = gp_track.mag() > 0. ? sqrt(gp_track.perp2())*Dphi  : -999.;
-	    float dist  = gp_track.mag() > 0. ? (gp-gp_track).mag()          : -999.;
-	    
-	    if( DR > track_hit_DRMax_ || dist > track_hit_distMax_ ) continue;
-	    if( gp_track.mag() <= 0. ) continue;
-	    
-	    outTree_.matchedClusters_n->at(idx) += 1;
-	    
-	    outTree_.matchedClusters_idx->at(idx).push_back(idx);
-	    outTree_.matchedClusters_det->at(idx).push_back(2);
-	    outTree_.matchedClusters_energy->at(idx).push_back(energy);
-	    outTree_.matchedClusters_energyCorr->at(idx).push_back(energy*fabs(sin(track.theta())));
-	    outTree_.matchedClusters_time->at(idx).push_back(time);
-	    outTree_.matchedClusters_rr->at(idx).push_back(RR);
-	    outTree_.matchedClusters_module->at(idx).push_back(module);
-	    outTree_.matchedClusters_modType->at(idx).push_back(modType);
-	    outTree_.matchedClusters_crystal->at(idx).push_back(crystal);
-	    outTree_.matchedClusters_ieta->at(idx).push_back(ieta);
-	    outTree_.matchedClusters_iphi->at(idx).push_back(iphi);
-	    outTree_.matchedClusters_size->at(idx).push_back(size);
-	    outTree_.matchedClusters_size_x->at(idx).push_back(sizeX);
-	    outTree_.matchedClusters_size_y->at(idx).push_back(sizeY);
-	    outTree_.matchedClusters_local_x->at(idx).push_back(lp.x());
-	    outTree_.matchedClusters_local_y->at(idx).push_back(lp.y());
-	    outTree_.matchedClusters_local_z->at(idx).push_back(lp.z());
-	    outTree_.matchedClusters_global_R->at(idx).push_back(sqrt(gp.perp2()));
-	    outTree_.matchedClusters_track_Deta->at(idx).push_back(fabs(Deta));
-	    outTree_.matchedClusters_track_Dphi->at(idx).push_back(fabs(Dphi));
-	    outTree_.matchedClusters_track_Dz->at(idx).push_back(Dz);
-	    outTree_.matchedClusters_track_RDphi->at(idx).push_back(RDphi);
-	    outTree_.matchedClusters_track_DR->at(idx).push_back(DR);
-	    outTree_.matchedClusters_track_dist->at(idx).push_back(dist);
-	    
-	    ++clusterIt;
-	  }
-      }
-  
-  
-    if( verbosity_ ) std::cout << "---\n\n\n" << std::endl;
-    
     outTree_.matchedRecHits_sietaieta->at(idx).push_back( ss_hit_count>0 ? sqrt(sieie)/ss_hit_count : -999. );
     outTree_.matchedRecHits_siphiiphi->at(idx).push_back( ss_hit_count>0 ? sqrt(sipip)/ss_hit_count : -999. );
+    
+    
+    //---find associated ETL clusters
+    clusterIt = 0;
+    for(auto clusIt : clustersETL)
+    {    
+      DetId id = clusIt.detId();
+      const auto& det = mtdGeometry_ -> idToDet(id);
+      const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(det->topology());
+      const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());    
+      for ( auto cluster : clusIt)
+      {
+        MTDDetId mtdId(id);
+        int RR = 0;
+        int module = 0;
+        int modType = 0;
+        int crystal = 0;
+        int ieta = 0;
+        int iphi = 0;
+	
+        if( mtdId.mtdSubDetector() == MTDDetId::ETL )
+        {
+          ETLDetId btlId(id);
+          RR = btlId.mtdRR();
+          module = btlId.module();
+          modType = btlId.modType();
+          // crystal = btlId.crystal();
+          // ieta = btlId.ieta();
+          // iphi = btlId.iphi();
+        }
+	
+        double energy = cluster.energy();
+        double time   = cluster.time();
+        int size=cluster.size();
+        int sizeX=cluster.sizeX();
+        int sizeY=cluster.sizeY();
+	
+        MeasurementPoint mp(cluster.x(),cluster.y());
+        LocalPoint lp = topo.localPosition(mp);
+        GlobalPoint gp = det->toGlobal(lp);
+	
+        float eta = gp.eta();
+        float phi = gp.phi();
+	
+        int closestPoint=-1;
+        float minDist=999;
+        for(unsigned int ic=0; ic<gp_ext.size();++ic)
+        {
+          GlobalPoint diff(gp_ext[ic].x()-gp.x(),gp_ext[ic].y()-gp.y(),gp_ext[ic].z()-gp.z());
+          if (diff.mag()<minDist)
+          {
+            closestPoint=ic;
+            minDist=diff.mag();
+          }
+        }
+	
+        if( closestPoint == -1 ) continue;
+        
+        GlobalPoint gp_track = gp_ext[closestPoint];      
+	
+        float Deta  = gp_track.mag() > 0. ? eta-gp_track.eta()           : -999.;
+        float Dphi  = gp_track.mag() > 0. ? deltaPhi(phi,gp_track.phi()) : -999.;
+        float DR    = gp_track.mag() > 0. ? sqrt(Deta*Deta+Dphi*Dphi)    : -999.;
+        float Dz    = gp_track.mag() > 0. ? gp_track.z()-gp.z()          : -999.;
+        float RDphi = gp_track.mag() > 0. ? sqrt(gp_track.perp2())*Dphi  : -999.;
+        float dist  = gp_track.mag() > 0. ? (gp-gp_track).mag()          : -999.;
+	
+        if( DR > track_hit_DRMax_ || dist > track_hit_distMax_ ) continue;
+        if( gp_track.mag() <= 0. ) continue;
+	
+        outTree_.matchedClusters_n->at(idx) += 1;
+	
+        outTree_.matchedClusters_idx->at(idx).push_back(idx);
+        outTree_.matchedClusters_det->at(idx).push_back(2);
+        outTree_.matchedClusters_energy->at(idx).push_back(energy);
+        outTree_.matchedClusters_energyCorr->at(idx).push_back(energy*fabs(sin(track.theta())));
+        outTree_.matchedClusters_time->at(idx).push_back(time);
+        outTree_.matchedClusters_rr->at(idx).push_back(RR);
+        outTree_.matchedClusters_module->at(idx).push_back(module);
+        outTree_.matchedClusters_modType->at(idx).push_back(modType);
+        outTree_.matchedClusters_crystal->at(idx).push_back(crystal);
+        outTree_.matchedClusters_ieta->at(idx).push_back(ieta);
+        outTree_.matchedClusters_iphi->at(idx).push_back(iphi);
+        outTree_.matchedClusters_size->at(idx).push_back(size);
+        outTree_.matchedClusters_size_x->at(idx).push_back(sizeX);
+        outTree_.matchedClusters_size_y->at(idx).push_back(sizeY);
+        outTree_.matchedClusters_local_x->at(idx).push_back(lp.x());
+        outTree_.matchedClusters_local_y->at(idx).push_back(lp.y());
+        outTree_.matchedClusters_local_z->at(idx).push_back(lp.z());
+        outTree_.matchedClusters_global_R->at(idx).push_back(sqrt(gp.perp2()));
+        outTree_.matchedClusters_track_Deta->at(idx).push_back(fabs(Deta));
+        outTree_.matchedClusters_track_Dphi->at(idx).push_back(fabs(Dphi));
+        outTree_.matchedClusters_track_Dz->at(idx).push_back(Dz);
+        outTree_.matchedClusters_track_RDphi->at(idx).push_back(RDphi);
+        outTree_.matchedClusters_track_DR->at(idx).push_back(DR);
+        outTree_.matchedClusters_track_dist->at(idx).push_back(dist);
+	
+        ++clusterIt;
+      }
     }
+    if( verbosity_ ) std::cout << "---\n\n\n" << std::endl;
+    
+    
     ++idx;
   }
   

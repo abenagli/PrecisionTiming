@@ -52,7 +52,7 @@ options.register('crysLayout',
                  '',
                  VarParsing.multiplicity.singleton,
                  VarParsing.varType.string,
-                 "crystal layout (tile, barphi, barzflat, barphiflat)")
+                 "crystal layout (tile, barphi, barzflat)")
 options.register('nThreads',
                  1,
                  VarParsing.multiplicity.singleton,
@@ -66,14 +66,14 @@ if 'tile' in options.crysLayout:
     myera=eras.Phase2_timing_layer_tile
 if 'barphi' in options.crysLayout:
     myera=eras.Phase2_timing_layer_bar
-if 'barzflat' in options.crysLayout:
-    myera=eras.Phase2C4_timing_layer_bar
 if 'barphiflat' in options.crysLayout:
     myera=eras.Phase2C4_timing_layer_bar
-process = cms.Process('FTLDumpHits',myera)
+if 'barzflat' in options.crysLayout:
+    myera=eras.Phase2C4_timing_layer_bar
+process = cms.Process('FTLDumpElectrons',myera)
 
 process.options = cms.untracked.PSet(
-    allowUnscheduled = cms.untracked.bool(True),
+    allowUnscheduled = cms.untracked.bool(False),
     numberOfThreads=cms.untracked.uint32(options.nThreads),
     numberOfStreams=cms.untracked.uint32(0),
     wantSummary = cms.untracked.bool(True)
@@ -161,8 +161,8 @@ process.source = cms.Source(
     )
 process.source.duplicateCheckMode = cms.untracked.string('noDuplicateCheck')
                             
-process.load('PrecisionTiming.FTLAnalysis.FTLDumpHits_cfi')
-FTLDumper = process.FTLDumpHits
+process.load('PrecisionTiming.FTLAnalysis.FTLDumpElectrons_cfi')
+FTLDumper = process.FTLDumpElectrons
 if (options.useMTDTrack):
     FTLDumper.tracksTag = cms.untracked.InputTag("trackExtenderWithMTD")
 
@@ -196,7 +196,12 @@ if (options.runMTDReco):
 #process.trackMCMatch.associator = cms.string('trackAssociatorByHits')
 #process.path = cms.Path(process.simHitTPAssocProducer*process.trackAssociatorByHits*process.trackMCMatch*FTLDumper)
 
+# Phase2 e-gamma
+
+process.load("RecoEgamma.Phase2InterimID.phase2EgammaRECO_cff")
+
 process.runseq = cms.Sequence()
+process.runseq += process.phase2Egamma
 if options.runMTDReco:
     process.runseq += cms.Sequence(process.mtdClusters*process.mtdTrackingRecHits)
     process.runseq += cms.Sequence(process.trackExtenderWithMTD)

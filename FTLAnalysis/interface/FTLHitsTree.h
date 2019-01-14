@@ -8,13 +8,17 @@ using namespace std;
 //---Define the TTree branches
 #define DYNAMIC_TREE_NAME FTLHitsTree
 
-#define DATA_TABLE                       \
-  DATA(int, event)                       \
-  DATA(int, lumi)			    \
-  DATA(int, run)			    \
-  DATA(int, simHits_n)                   \
-  DATA(int, recHits_n)                   \
-  DATA(int, clusters_n)                   
+#define DATA_TABLE                              \
+  DATA(int, event)                              \
+  DATA(int, lumi)                               \
+  DATA(int, run)                                \
+  DATA(int, simHits_n)                          \
+  DATA(int, recHits_n)                          \
+  DATA(int, clusters_n)                         \
+  DATA(float, genVtx_x)                         \
+  DATA(float, genVtx_y)                         \
+  DATA(float, genVtx_z)                         \
+  DATA(float, genVtx_t)                   
 
 #define DATA_CLASS_TABLE                                                \
   DATA(vector<int>,   track_idx)                                        \
@@ -23,12 +27,21 @@ using namespace std;
   DATA(vector<float>, track_phi)                                        \
   DATA(vector<float>, track_eta_atBTL)                                  \
   DATA(vector<float>, track_phi_atBTL)                                  \
+  DATA(vector<float>, track_local_x_atBTL)                              \
+  DATA(vector<float>, track_local_y_atBTL)                              \
+  DATA(vector<float>, track_local_z_atBTL)                              \
+  DATA(vector<float>, track_global_R_atBTL)                             \
   DATA(vector<float>, track_eta_atETL)                                  \
   DATA(vector<float>, track_phi_atETL)                                  \
+  DATA(vector<float>, track_local_x_atETL)                              \
+  DATA(vector<float>, track_local_y_atETL)                              \
+  DATA(vector<float>, track_local_z_atETL)                              \
+  DATA(vector<float>, track_global_R_atETL)                             \
   DATA(vector<float>, track_x)                                          \
   DATA(vector<float>, track_y)                                          \
   DATA(vector<float>, track_z)                                          \
   DATA(vector<float>, track_t)                                          \
+  DATA(vector<float>, track_length)                                     \
   DATA(vector<float>, track_energy)                                     \
   DATA(vector<float>, track_normalizedChi2)                             \
   DATA(vector<int>,   track_numberOfValidHits)                          \
@@ -61,9 +74,11 @@ using namespace std;
   DATA(vector<float>, simHits_exit_local_y)                             \
   DATA(vector<float>, simHits_exit_local_z)                             \
   DATA(vector<float>, simHits_exit_global_R)                            \
-  DATA(vector<int>, recHits_det)                                      \
+  DATA(vector<int>,   recHits_det)                                      \
   DATA(vector<float>, recHits_energy)                                   \
   DATA(vector<float>, recHits_time)                                     \
+  DATA(vector<float>, recHits_time_L)                                   \
+  DATA(vector<float>, recHits_time_R)                                   \
   DATA(vector<int>,   recHits_rr)                                       \
   DATA(vector<int>,   recHits_module)                                   \
   DATA(vector<int>,   recHits_modType)                                  \
@@ -74,31 +89,31 @@ using namespace std;
   DATA(vector<float>, recHits_local_y)                                  \
   DATA(vector<float>, recHits_local_z)                                  \
   DATA(vector<float>, recHits_global_R)                                 \
-  DATA(vector<int>,   clusters_det)                                   \
-  DATA(vector<float>, clusters_energy)                                   \
-  DATA(vector<float>, clusters_time)                                     \
-  DATA(vector<float>, clusters_x)                                   \
-  DATA(vector<float>, clusters_y)                                     \
-  DATA(vector<float>, clusters_seed_energy)                                   \
-  DATA(vector<float>, clusters_seed_time)                                     \
-  DATA(vector<int>,   clusters_seed_x)                                   \
-  DATA(vector<int>,   clusters_seed_y)                                     \
-  DATA(vector<int>,   clusters_size)                                       \
-  DATA(vector<int>,   clusters_size_x)                                       \
-  DATA(vector<int>,   clusters_size_y)                                       \
-  DATA(vector<int>,   clusters_rr)                                       \
-  DATA(vector<int>,   clusters_module)                                   \
-  DATA(vector<int>,   clusters_modType)                                  \
-  DATA(vector<int>,   clusters_crystal)                                  \
-  DATA(vector<int>,   clusters_ieta)                                     \
-  DATA(vector<int>,   clusters_iphi)                                     \
-  DATA(vector<float>, clusters_local_x)                                  \
-  DATA(vector<float>, clusters_local_y)                                  \
-  DATA(vector<float>, clusters_local_z)                                  \
-  DATA(vector<float>, clusters_global_R)                                 \
+  DATA(vector<int>,   clusters_det)                                     \
+  DATA(vector<float>, clusters_energy)                                  \
+  DATA(vector<float>, clusters_time)                                    \
+  DATA(vector<float>, clusters_x)                                       \
+  DATA(vector<float>, clusters_y)                                       \
+  DATA(vector<float>, clusters_seed_energy)                             \
+  DATA(vector<float>, clusters_seed_time)                               \
+  DATA(vector<int>,   clusters_seed_x)                                  \
+  DATA(vector<int>,   clusters_seed_y)                                  \
+  DATA(vector<int>,   clusters_size)                                    \
+  DATA(vector<int>,   clusters_size_x)                                  \
+  DATA(vector<int>,   clusters_size_y)                                  \
+  DATA(vector<int>,   clusters_rr)                                      \
+  DATA(vector<int>,   clusters_module)                                  \
+  DATA(vector<int>,   clusters_modType)                                 \
+  DATA(vector<int>,   clusters_crystal)                                 \
+  DATA(vector<int>,   clusters_ieta)                                    \
+  DATA(vector<int>,   clusters_iphi)                                    \
+  DATA(vector<float>, clusters_local_x)                                 \
+  DATA(vector<float>, clusters_local_y)                                 \
+  DATA(vector<float>, clusters_local_z)                                 \
+  DATA(vector<float>, clusters_global_R)                                \
   DATA(vector<int>,   matchedSimHits_n)                                 \
   DATA(vector<int>,   matchedRecHits_n)                                 \
-  DATA(vector<int>,   matchedClusters_n)                                 \
+  DATA(vector<int>,   matchedClusters_n)                                \
   DATA(vector, matchedSimHits_idx,           <vector<int> >)            \
   DATA(vector, matchedSimHits_det,           <vector<int> >)            \
   DATA(vector, matchedSimHits_energy,        <vector<float> >)          \
@@ -129,6 +144,8 @@ using namespace std;
   DATA(vector, matchedRecHits_energy,        <vector<float> >)          \
   DATA(vector, matchedRecHits_energyCorr,    <vector<float> >)          \
   DATA(vector, matchedRecHits_time,          <vector<float> >)          \
+  DATA(vector, matchedRecHits_time_L,        <vector<float> >)          \
+  DATA(vector, matchedRecHits_time_R,        <vector<float> >)          \
   DATA(vector, matchedRecHits_rr,            <vector<int> >)            \
   DATA(vector, matchedRecHits_module,        <vector<int> >)            \
   DATA(vector, matchedRecHits_modType,       <vector<int> >)            \
@@ -147,29 +164,29 @@ using namespace std;
   DATA(vector, matchedRecHits_track_dist,    <vector<float> >)          \
   DATA(vector, matchedRecHits_sietaieta,     <vector<float> >)          \
   DATA(vector, matchedRecHits_siphiiphi,     <vector<float> >)          \
-  DATA(vector, matchedClusters_idx,           <vector<int> >)            \
-  DATA(vector, matchedClusters_det,           <vector<int> >)            \
-  DATA(vector, matchedClusters_energy,        <vector<float> >)          \
-  DATA(vector, matchedClusters_energyCorr,    <vector<float> >)          \
-  DATA(vector, matchedClusters_time,          <vector<float> >)          \
-  DATA(vector, matchedClusters_rr,            <vector<int> >)            \
-  DATA(vector, matchedClusters_module,        <vector<int> >)            \
-  DATA(vector, matchedClusters_modType,       <vector<int> >)            \
-  DATA(vector, matchedClusters_crystal,       <vector<int> >)            \
-  DATA(vector, matchedClusters_ieta,          <vector<int> >)            \
-  DATA(vector, matchedClusters_iphi,          <vector<int> >)            \
-  DATA(vector, matchedClusters_size,          <vector<int> >)            \
-  DATA(vector, matchedClusters_size_x,        <vector<int> >)            \
-  DATA(vector, matchedClusters_size_y,        <vector<int> >)            \
-  DATA(vector, matchedClusters_local_x,       <vector<float> >)          \
-  DATA(vector, matchedClusters_local_y,       <vector<float> >)          \
-  DATA(vector, matchedClusters_local_z,       <vector<float> >)          \
-  DATA(vector, matchedClusters_global_R,      <vector<float> >)          \
-  DATA(vector, matchedClusters_track_Deta,    <vector<float> >)          \
-  DATA(vector, matchedClusters_track_Dphi,    <vector<float> >)          \
-  DATA(vector, matchedClusters_track_DR,      <vector<float> >)          \
-  DATA(vector, matchedClusters_track_Dz,      <vector<float> >)          \
-  DATA(vector, matchedClusters_track_RDphi,   <vector<float> >)          \
+  DATA(vector, matchedClusters_idx,           <vector<int> >)           \
+  DATA(vector, matchedClusters_det,           <vector<int> >)           \
+  DATA(vector, matchedClusters_energy,        <vector<float> >)         \
+  DATA(vector, matchedClusters_energyCorr,    <vector<float> >)         \
+  DATA(vector, matchedClusters_time,          <vector<float> >)         \
+  DATA(vector, matchedClusters_rr,            <vector<int> >)           \
+  DATA(vector, matchedClusters_module,        <vector<int> >)           \
+  DATA(vector, matchedClusters_modType,       <vector<int> >)           \
+  DATA(vector, matchedClusters_crystal,       <vector<int> >)           \
+  DATA(vector, matchedClusters_ieta,          <vector<int> >)           \
+  DATA(vector, matchedClusters_iphi,          <vector<int> >)           \
+  DATA(vector, matchedClusters_size,          <vector<int> >)           \
+  DATA(vector, matchedClusters_size_x,        <vector<int> >)           \
+  DATA(vector, matchedClusters_size_y,        <vector<int> >)           \
+  DATA(vector, matchedClusters_local_x,       <vector<float> >)         \
+  DATA(vector, matchedClusters_local_y,       <vector<float> >)         \
+  DATA(vector, matchedClusters_local_z,       <vector<float> >)         \
+  DATA(vector, matchedClusters_global_R,      <vector<float> >)         \
+  DATA(vector, matchedClusters_track_Deta,    <vector<float> >)         \
+  DATA(vector, matchedClusters_track_Dphi,    <vector<float> >)         \
+  DATA(vector, matchedClusters_track_DR,      <vector<float> >)         \
+  DATA(vector, matchedClusters_track_Dz,      <vector<float> >)         \
+  DATA(vector, matchedClusters_track_RDphi,   <vector<float> >)         \
   DATA(vector, matchedClusters_track_dist,    <vector<float> >)          
 
 #include "ExternalTools/DynamicTTree/interface/DynamicTTreeInterface.h"

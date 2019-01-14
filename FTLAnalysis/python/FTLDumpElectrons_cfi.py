@@ -1,23 +1,22 @@
 import FWCore.ParameterSet.Config as cms
 
-FTLDumpElectronsRECO = cms.EDAnalyzer(
-    "FTLDumpElectronsRECO",
-    genParticlesTag = cms.untracked.InputTag("genParticles", "", "HLT"),
-    electronsTag = cms.untracked.InputTag("gedGsfElectrons", "", "HLT"),
-    ftlRecHitsTag = cms.untracked.InputTag("ftlRecHits", "FTLBarrel", "HLT"),
-    simTkTag = cms.untracked.InputTag("g4SimHits", "", "HLT"),
-    simVtxTag = cms.untracked.InputTag("g4SimHits", "", "HLT"),
-    mcTruthEleEtThr = cms.untracked.double(10),
-    readFTLRecHits = cms.untracked.bool(True),
-    treeName = cms.untracked.string("ele_tree")
-)
-
-FTLDumpElectronsPAT = cms.EDAnalyzer(
-    "FTLDumpElectronsPAT",
-    electronsTag = cms.untracked.InputTag("slimmedElectrons", "", "RECO"),
-    simTkTag = cms.untracked.InputTag("g4SimHits", "", "SIM"),
-    simVtxTag = cms.untracked.InputTag("g4SimHits", "", "SIM"),
-    mcTruthEleEtThr = cms.untracked.double(10),
-    readFTLRecHits = cms.untracked.bool(True),
-    treeName = cms.untracked.string("ele_tree")
-)
+FTLDumpElectrons = cms.EDAnalyzer(
+    'FTLDumpElectrons',
+    genParticlesTag = cms.untracked.InputTag("genParticles"),
+    simHitsBTLTag = cms.untracked.InputTag("g4SimHits:FastTimerHitsBarrel"),
+    recHitsBTLTag = cms.untracked.InputTag("mtdRecHits:FTLBarrel"),
+    clustersBTLTag = cms.untracked.InputTag("mtdClusters:FTLBarrel"),
+    simHitsETLTag = cms.untracked.InputTag("g4SimHits:FastTimerHitsEndcap"),
+    recHitsETLTag = cms.untracked.InputTag("mtdRecHits:FTLEndcap"),
+    clustersETLTag = cms.untracked.InputTag("mtdClusters:FTLEndcap"),
+    barrelElectronsTag = cms.untracked.InputTag("gedGsfElectrons"),
+    endcapElectronsTag = cms.untracked.InputTag("cleanedEcalDrivenGsfElectronsFromMultiCl"),
+    barrelElectronMVATag = cms.untracked.InputTag("hgcElectronMVAbarrel"),
+    endcapElectronMVATag = cms.untracked.InputTag("hgcElectronMVAendcap"),
+    genVtxTag = cms.untracked.InputTag("g4SimHits"),
+    crysLayout = cms.untracked.int32(0),
+    track_hit_DRMax = cms.double(100.05),
+    track_hit_distMax = cms.double(99999.),
+    treeName = cms.untracked.string("DumpElectrons"),
+    verbosity = cms.bool(False)
+    )
